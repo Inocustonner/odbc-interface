@@ -1,5 +1,5 @@
 #pragma once
-
+#include <odbc/logger.hpp>
 #include <odbc/odbc_data.hpp>
 #include <vector>
 #include <windows.h>

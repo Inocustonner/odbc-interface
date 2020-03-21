@@ -2,7 +2,59 @@
 #include <type_traits>
 #include <cstdlib>
 
+#define TRY_SQL_NATIVE(x, handle_err, after_handler) \
+	{ \
+		RETCODE rc = x; \
+		if (rc != SQL_SUCCESS) \
+		{ \
+		} \
+		if (rc == SQL_ERROR) \
+		{ \
+			handle_err; \
+			after_handler; \
+		} \
+	}
+
+#define TRY_SQL TRY_SQL_NATIVE
 static SQLHENV hEnv= NULL;
+
+void handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
+{
+
+	SQLSMALLINT rec_i = 0;
+	SQLINTEGER error_i;
+	CHAR message_sz[1000] = {};
+	CHAR state_sz[SQL_SQLSTATE_SIZE + 1] = {};
+	
+	if (ret_code == SQL_INVALID_HANDLE)
+	{
+		// report_err("Invalid handle\n");
+		return;
+	}
+	
+	while (SQLGetDiagRec(htype,
+						 hsql,
+						 rec_i++,
+						 (SQLCHAR*)state_sz,
+						 &error_i,
+						 (SQLCHAR*)message_sz,
+						 (SQLSMALLINT)std::size(message_sz),
+						 nullptr) == SQL_SUCCESS)
+	{
+		// Hide data truncated..
+		if (strncmp(state_sz, "01004", 5))
+		{
+			// report_err("[ %5.5s ] %s (%d)\n", state_wsz, message_wsz, error_i);
+		}
+	}	
+}
+
+
+void std_sqlerr_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const char *msg = nullptr)
+{
+	
+}
+
 
 bool init_env()
 {
@@ -122,16 +174,17 @@ Stmt::Stmt(HSTMT hStmt, const char *query) : hStmt(hStmt), query(query) {}
 
 Stmt::~Stmt()
 {
-	last_retcode = SQLFreeStmt(hStmt, SQL_CLOSE);
-	if (last_retcode == SQL_SUCCESS ||
-		last_retcode == SQL_SUCCESS_WITH_INFO)
-	{
-		// do mb something
-	}
-	else
-	{
-		// error log
-	}
+	// last_retcode = SQLFreeStmt(hStmt, SQL_CLOSE);
+	// if (last_retcode == SQL_SUCCESS ||
+	// 	last_retcode == SQL_SUCCESS_WITH_INFO)
+	// {
+	// 	// do mb something
+	// }
+	// else
+	// {
+	// 	// error log
+	// }
+	TRY_SQL(SQLFreeStmt(hStmt, SQL_CLOSE), handle_diag_rec(hStmt, SQL_HANDLE_STMT, rc), last_retcode = rc);
 }
 
 void Stmt::set_query(const char *query)
@@ -177,7 +230,7 @@ bool Stmt::alloc_odbc_data()
 									   0,
 									   nullptr,
 									   &sql_type_l);
-		
+
 		if (last_retcode == SQL_SUCCESS
 			|| last_retcode == SQL_SUCCESS_WITH_INFO)
 		{
@@ -392,7 +445,16 @@ Stmt *Odbc::exec_query(const char *query)
 	{
 		stmt = new Stmt(hStmt, query);
 		stmt->exec();
-		return stmt;
+		if (stmt->get_last_retcode() == SQL_SUCCESS ||
+			stmt->get_last_retcode() == SQL_SUCCESS_WITH_INFO)
+		{
+			// handle log if with_info
+			return stmt;
+		}
+		else
+		{
+			return nullptr;
+		}
 	}
 	else
 	{

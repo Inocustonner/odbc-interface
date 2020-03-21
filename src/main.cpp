@@ -3,12 +3,13 @@
 
 void atp()
 {
+	using namespace Odbc_Logger;
 	Odbc bd;
 	const char *conn_str = "DRIVER={PostgreSQL ANSI}; SERVER=localhost; PORT=5432; DATABASE=mydb; UID=postgres; PWD=root;";
 	bd.set_connection_string(conn_str);
 	if (bd.connect())
 	{
-		printf("Connected\n");
+		log(L"Connected");
 		auto *stmt = bd.exec_query("SELECT * FROM test;");
 		if (stmt == nullptr)
 		{
@@ -48,12 +49,20 @@ void atp()
 	{
 		printf("Connection Failed\n");
 	}
+	log_err(L"Disconnected");
 }
 
 int main()
 {
+	// initializing
+	Odbc_Logger::init_logger();
 	init_env();
+
+	// test case
 	atp();
+
+	// deinitializing
 	free_env();
+	Odbc_Logger::free_logger();
 	return 0;
 }
