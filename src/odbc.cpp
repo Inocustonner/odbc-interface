@@ -1,36 +1,42 @@
 #include <odbc/odbc.hpp>
 #include <type_traits>
 #include <cstdlib>
+#include <string>
+// #define LOG(format, ...) Odbc_Logger::pTrace->P7_TRACE(L"[\n" format L"\n]", __VA_ARGS__)
+// #define ERR_LOG(format, ...) Odbc_Logger::pTrace->P7_ERROR(L"[\n" format L"\n]", __VA_ARGS__)
+// #define LOG_LINE(format, ...) LOG(L"\t" format, __VA_ARGS__)
 
-#define TRY_SQL_NATIVE(x, handle_err, after_handler) \
+#define TRY_SQL_NATIVE(h, ht, x, comment, after_err_handler) \
 	{ \
 		RETCODE rc = x; \
-		if (rc != SQL_SUCCESS) \
+		if (rc == SQL_SUCCESS_WITH_INFO) \
 		{ \
+			std_sqltrace_handler(h, ht, x, comment); \
 		} \
 		if (rc == SQL_ERROR) \
 		{ \
-			handle_err; \
-			after_handler; \
+			std_sqlerr_handler(h, ht, x, comment); \
+			after_err_handler; \
 		} \
 	}
 
 #define TRY_SQL TRY_SQL_NATIVE
 static SQLHENV hEnv= NULL;
 
-void handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
+std::string handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
 {
+	if (ret_code == SQL_INVALID_HANDLE)
+	{
+		// report_err("Invalid handle\n");
+		return std::string("\t\t" "Invalid handle\n");
+	}
+	std::string diag_rec = "";
+	diag_rec.reserve(1000);
 
 	SQLSMALLINT rec_i = 0;
 	SQLINTEGER error_i;
 	CHAR message_sz[1000] = {};
 	CHAR state_sz[SQL_SQLSTATE_SIZE + 1] = {};
-	
-	if (ret_code == SQL_INVALID_HANDLE)
-	{
-		// report_err("Invalid handle\n");
-		return;
-	}
 	
 	while (SQLGetDiagRec(htype,
 						 hsql,
@@ -44,15 +50,62 @@ void handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
 		// Hide data truncated..
 		if (strncmp(state_sz, "01004", 5))
 		{
+			CHAR format_buff[1000] = {};
+			std::snprintf(format_buff, std::size(format_buff), "\t\t" "[ %5.5s ] %s (%d)\n", state_sz, message_sz, error_i);
+			diag_rec += std::string(format_buff);
 			// report_err("[ %5.5s ] %s (%d)\n", state_wsz, message_wsz, error_i);
 		}
-	}	
+	}
+	// TODO: replace with more efficient variant
+	if (std::size(diag_rec))
+		diag_rec.pop_back(); // remove last '\n'
+	return diag_rec;
 }
 
 
-void std_sqlerr_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const char *msg = nullptr)
+void std_sqltrace_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const wchar_t *line_msg_wstr = nullptr)
 {
-	
+	std::wstring trace_msg;
+	trace_msg.reserve(1000);
+
+	if (line_msg_wstr)
+	{
+		trace_msg += L"\tComment:\n" L"\t\t" + std::wstring(line_msg_wstr) + L'\n';
+	}
+
+	std::string diag_rec_str = handle_diag_rec(hsql, htype, ret_code);
+	if (diag_rec_str.length())
+	{
+		trace_msg += L"\t" L"DiagRec:\n";
+		trace_msg.resize(trace_msg.length() + diag_rec_str.length());
+
+		size_t converted;
+		mbstowcs_s(&converted, trace_msg.data(), trace_msg.length(), diag_rec_str.data(), _TRUNCATE);
+	}
+	LOG(L"%s", trace_msg.c_str());
+}
+
+
+void std_sqlerr_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const wchar_t *line_msg_wstr = nullptr)
+{
+	std::wstring error_msg;
+	error_msg.reserve(1000);
+
+	if (line_msg_wstr)
+	{
+		error_msg += L"\tComment:\n" L"\t\t" + std::wstring(line_msg_wstr) + L'\n';
+	}
+
+	std::string diag_rec_str = handle_diag_rec(hsql, htype, ret_code);
+	if (diag_rec_str.length())
+	{
+		error_msg += L"\t" L"DiagRec:\n";
+		error_msg.resize(error_msg.length() + diag_rec_str.length());
+
+		size_t converted;
+		mbstowcs_s(&converted, error_msg.data(), error_msg.length(), diag_rec_str.data(), _TRUNCATE);
+	}
+	ERR_LOG(L"%s", error_msg.c_str());
 }
 
 
@@ -71,7 +124,7 @@ bool init_env()
 		}
 		else
 		{
-			return true;		
+			return Odbc_Logger::init_logger();
 		}
 		
 	}
@@ -82,6 +135,7 @@ void free_env()
 {
 	if (hEnv)
 		SQLFreeHandle(SQL_HANDLE_ENV, hEnv);
+	Odbc_Logger::free_logger();
 }
 
 
@@ -104,7 +158,8 @@ size_t sql_ctype_size(SQLSMALLINT ctype)
 		case SQL_C_UBIGINT:		return sizeof(sql_ctype_t<SQL_C_UBIGINT>);
 		case SQL_C_BINARY:		return sizeof(sql_ctype_t<SQL_C_BINARY>);
 		default:
-			// error log
+			ERR_LOG(L"Undefined SQL_C_TYPE %X", ctype);
+			// throw error
 			return 0;
 	}
 }
@@ -184,7 +239,9 @@ Stmt::~Stmt()
 	// {
 	// 	// error log
 	// }
-	TRY_SQL(SQLFreeStmt(hStmt, SQL_CLOSE), handle_diag_rec(hStmt, SQL_HANDLE_STMT, rc), last_retcode = rc);
+	TRY_SQL(hStmt, SQL_HANDLE_STMT,
+			SQLFreeStmt(hStmt, SQL_CLOSE), nullptr,
+			last_retcode = rc);
 }
 
 void Stmt::set_query(const char *query)
@@ -404,25 +461,18 @@ bool Odbc::connect()
 		// error log
 		return false;
 	}
-
-	last_retcode = SQLDriverConnect(hDbc,
-									NULL,
-									(SQLCHAR*)connection_string,
-									SQL_NTS,
-									NULL,
-									0,
-									NULL,
-									SQL_DRIVER_NOPROMPT); // make prompt option possible
-
-	if (last_retcode == SQL_SUCCESS ||
-		last_retcode == SQL_SUCCESS_WITH_INFO)
-	{
-		connected = true;
-	}
-	else
-	{
-		return false;
-	}
+	TRY_SQL(hDbc, SQL_HANDLE_DBC,
+			last_retcode = SQLDriverConnect(hDbc,
+											NULL,
+											(SQLCHAR*)connection_string,
+											SQL_NTS,
+											NULL,
+											0,
+											NULL,
+											SQL_DRIVER_NOPROMPT),
+			L"Failed to set driver connection",
+			return false);			
+	connected = true;
 
 	// alloc hStmt
 	last_retcode = SQLAllocHandle(SQL_HANDLE_STMT, hDbc, &hStmt);

@@ -3,11 +3,6 @@
 #include <odbc/logger.hpp>
 #include <string>
 #include <cstdarg>
-IP7_Client *pClient = nullptr;
-IP7_Trace *pTrace = nullptr;
-IP7_Trace::hModule hModule = NULL;
-
-
 std::wstring GetExePath()
 {
 	std::wstring path;
@@ -25,14 +20,18 @@ std::wstring GetExePath()
 
 namespace Odbc_Logger
 {
+	extern IP7_Client *pClient = nullptr;
+	extern IP7_Trace *pTrace = nullptr;
+	extern IP7_Trace::hModule hModule = NULL;
+
 	bool init_logger()
 	{
 		std::wstring path = GetExePath();
 		// form args for logger
-		std::wstring args_str = L"/P7.Sink=FileTxt /P7.Format=\"{%cn}[%tf] %lv:\n\t %ms\" ";
+		std::wstring args_str = L"/P7.Sink=FileTxt /P7.Format=\"{%cn}[%tf] %lv:\n%ms\" ";
 		args_str += L"P7.Dir=" + path + L"/log";
 
-		printf("args : %ls\n", args_str.c_str());
+		// printf("args : %ls\n", args_str.c_str());
 
 		P7_Set_Crash_Handler();
 
@@ -56,19 +55,19 @@ namespace Odbc_Logger
 	}
 
 
-	void log(const wchar_t *format, ...)
-	{
-		va_list args;
-		va_start(args, format);
-		pTrace->P7_TRACE(hModule, format, args);
-		va_end(args);
-	}
+	// void log(const wchar_t *format, ...)
+	// {
+	// 	va_list args;
+	// 	va_start(args, format);
+	// 	pTrace->P7_TRACE(hModule, format, args);
+	// 	va_end(args);
+	// }
 
-	void log_err(const wchar_t *format, ...)
-	{
-		va_list args;
-		va_start(args, format);
-		pTrace->P7_ERROR(hModule, format, args);
-		va_end(args);
-	}
+	// void err_log(const wchar_t *format, ...)
+	// {
+	// 	va_list args;
+	// 	va_start(args, format);
+	// 	pTrace->P7_ERROR(hModule, format, args);
+	// 	va_end(args);
+	// }
 };

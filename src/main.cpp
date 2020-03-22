@@ -3,17 +3,16 @@
 
 void atp()
 {
-	using namespace Odbc_Logger;
 	Odbc bd;
 	const char *conn_str = "DRIVER={PostgreSQL ANSI}; SERVER=localhost; PORT=5432; DATABASE=mydb; UID=postgres; PWD=root;";
 	bd.set_connection_string(conn_str);
 	if (bd.connect())
 	{
-		log(L"Connected");
+		LOG_LINE(L"Connected");
 		auto *stmt = bd.exec_query("SELECT * FROM test;");
 		if (stmt == nullptr)
 		{
-			printf("Failed to exec_query");
+			ERR_LOG(L"\tFailed to exec_query");
 			return;
 		}
 
@@ -42,20 +41,20 @@ void atp()
 		}
 		else
 		{
-			printf("Failed to recive rows of data\n");
+			ERR_LOG(L"\tFailed to recive rows of data\n");
 		}
 	}
 	else
 	{
-		printf("Connection Failed\n");
+		ERR_LOG("\tConnection Failed");
+		return;
 	}
-	log_err(L"Disconnected");
+	LOG_LINE(L"Disconnected");
 }
 
 int main()
 {
 	// initializing
-	Odbc_Logger::init_logger();
 	init_env();
 
 	// test case
@@ -63,6 +62,5 @@ int main()
 
 	// deinitializing
 	free_env();
-	Odbc_Logger::free_logger();
 	return 0;
 }
