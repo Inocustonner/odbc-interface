@@ -1,3 +1,7 @@
 **.txt
-/obj
-/bin
+**.pdb
+obj/
+bin/
+src/
+build*
+lib/*
