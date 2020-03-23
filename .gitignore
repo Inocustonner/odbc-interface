@@ -1,3 +1,8 @@
 **.txt
-/obj
-/bin
+!**CMakeLists.txt
+**.pdb
+obj/
+bin/
+src/
+build*
+lib/*

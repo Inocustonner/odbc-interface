@@ -7,7 +7,7 @@ std::wstring GetExePath()
 {
 	std::wstring path;
 	path.resize(MAX_PATH + 1);
-	size_t path_len = GetModuleFileNameW(NULL, path.data(), path.size());
+	size_t path_len = GetModuleFileNameW(NULL, (LPWSTR)path.data(), path.size());
 	path.resize(path.find_last_of(L"\\"));
 	for (auto it = std::begin(path); it != std::end(path); ++it)
 	{
@@ -28,7 +28,7 @@ namespace Odbc_Logger
 	{
 		std::wstring path = GetExePath();
 		// form args for logger
-		std::wstring args_str = L"/P7.Sink=FileTxt /P7.Format=\"{%cn}[%tf] %lv:\n%ms\" ";
+		std::wstring args_str = L"/P7.Sink=FileTxt /P7.Roll=1024mb /P7.Format=\"{%cn}[%tf] %lv:\n%ms\" ";
 		args_str += L"P7.Dir=" + path + L"/log";
 
 		// printf("args : %ls\n", args_str.c_str());

@@ -1,6 +1,6 @@
 #include <odbc/odbc_data.hpp>
 #include <cstdlib>
-
+#include <cstdio>
 Odbc_Data::Odbc_Data(Odbc_Data &&odata)
 {
 	this->data = odata.data;
@@ -27,8 +27,8 @@ Odbc_Data &Odbc_Data::operator=(Odbc_Data &&odata)
 
 Odbc_Data::~Odbc_Data()
 {
-#ifdef ODBC_DEBUG
-	pritnf("odbc_data dctor : data %p, ind_ptr %p\n", data, ind_ptr);
+#ifdef ODBC_DEBUG_DATA
+	printf("odbc_data dctor : data %p, ind_ptr %p\n", data, ind_ptr);
 #endif
 	if (data) free(data);
 	if (ind_ptr) free(ind_ptr);

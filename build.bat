@@ -18,7 +18,7 @@ REM -------------- SET ADDITIONAL INCLUDE DIRs --------------
 
 
 REM -------------- SET MACRO DEFs -------------- 
-set CompilerFlags=%CompilerFlags% /D _CRT_SECURE_NO_WARNINGS /D_SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING /D ODBC_STATIC
+set CompilerFlags=%CompilerFlags% /D _CRT_SECURE_NO_WARNINGS /D_SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
 REM -------------- SET MACRO DEFs -------------- 
 
 
@@ -31,7 +31,7 @@ set LinkerFlags=%LinkerFlags% /LIBPATH:%Libpath%
 REM -------------- SET ADDITIONAL LIBPATH -------------- 
 
 REM -------------- SET UNITS -------------- 
-set TUnits=main.cpp odbc.cpp odbc_data.cpp logger.cpp
+set TUnits=odbc.cpp odbc_data.cpp logger.cpp
 REM -------------- SET UNITS --------------
 
 
@@ -45,7 +45,12 @@ if not exist %binPath% mkdir %binPath%
 
 cd %srcPath%
 
-cl %TUnits% %CompilerFlags% /link %LinkerFlags% %Depends%
+cl /c %TUnits% %CompilerFlags%
+
+cd %objPath%
+set Objs=dir /b/s
+lib  %LinkerFlags%
+cd ..
 
 del vc140.pdb
 

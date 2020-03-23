@@ -33,11 +33,11 @@ std::string handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
 	std::string diag_rec = "";
 	diag_rec.reserve(1000);
 
-	SQLSMALLINT rec_i = 0;
+	SQLSMALLINT rec_i = 1;
 	SQLINTEGER error_i;
 	CHAR message_sz[1000] = {};
 	CHAR state_sz[SQL_SQLSTATE_SIZE + 1] = {};
-	
+	SQLSMALLINT read;
 	while (SQLGetDiagRec(htype,
 						 hsql,
 						 rec_i++,
@@ -45,7 +45,7 @@ std::string handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
 						 &error_i,
 						 (SQLCHAR*)message_sz,
 						 (SQLSMALLINT)std::size(message_sz),
-						 nullptr) == SQL_SUCCESS)
+						 &read) == SQL_SUCCESS)
 	{
 		// Hide data truncated..
 		if (strncmp(state_sz, "01004", 5))
@@ -80,7 +80,7 @@ void std_sqltrace_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, c
 		trace_msg.resize(trace_msg.length() + diag_rec_str.length());
 
 		size_t converted;
-		mbstowcs_s(&converted, trace_msg.data(), trace_msg.length(), diag_rec_str.data(), _TRUNCATE);
+		mbstowcs_s(&converted, (wchar_t*)trace_msg.data(), trace_msg.length(), diag_rec_str.data(), _TRUNCATE);
 	}
 	LOG(L"%s", trace_msg.c_str());
 }
@@ -103,7 +103,7 @@ void std_sqlerr_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, con
 		error_msg.resize(error_msg.length() + diag_rec_str.length());
 
 		size_t converted;
-		mbstowcs_s(&converted, error_msg.data(), error_msg.length(), diag_rec_str.data(), _TRUNCATE);
+		mbstowcs_s(&converted, (wchar_t*)error_msg.data(), error_msg.length(), diag_rec_str.data(), _TRUNCATE);
 	}
 	ERR_LOG(L"%s", error_msg.c_str());
 }
@@ -253,7 +253,9 @@ void Stmt::set_query(const char *query)
 RETCODE Stmt::exec()
 {
 	cols_cnt = 0;
-	last_retcode = SQLExecDirect(hStmt, (SQLCHAR*)query, SQL_NTS);
+	TRY_SQL(hStmt, SQL_HANDLE_STMT,
+			SQLExecDirect(hStmt, (SQLCHAR*)query, SQL_NTS), nullptr,
+				last_retcode = rc);
 	return last_retcode;
 }
 
@@ -261,7 +263,11 @@ RETCODE Stmt::exec()
 SQLSMALLINT Stmt::get_cols_cnt()
 {
 	if (!cols_cnt)
-		last_retcode = SQLNumResultCols(hStmt, &cols_cnt); // if error occ sets cols to 0
+	{
+		TRY_SQL(hStmt, SQL_HANDLE_STMT,
+				SQLNumResultCols(hStmt, &cols_cnt), nullptr,
+				last_retcode = rc);
+	}
 	return cols_cnt;
 }
 
@@ -269,7 +275,11 @@ SQLSMALLINT Stmt::get_cols_cnt()
 SQLLEN Stmt::get_rows_cnt()
 {
 	if (!rows_cnt)
-		last_retcode = SQLRowCount(hStmt, &rows_cnt);
+	{
+		TRY_SQL(hStmt, SQL_HANDLE_STMT,
+				SQLRowCount(hStmt, &rows_cnt), nullptr,
+				last_retcode = rc);
+	}
 	return rows_cnt;
 }
 
@@ -280,74 +290,53 @@ bool Stmt::alloc_odbc_data()
 	{
 		SQLSMALLINT sql_type_l;
 		SQLLEN data_size = 0;
-		last_retcode = SQLColAttribute(hStmt,
-									   col,
-									   SQL_DESC_CONCISE_TYPE,
-									   nullptr,
-									   0,
-									   nullptr,
-									   &sql_type_l);
-
-		if (last_retcode == SQL_SUCCESS
-			|| last_retcode == SQL_SUCCESS_WITH_INFO)
-		{
-			// if this is string type then obtain it's length info
-			if (sql_type_l == SQL_C_CHAR ||
-				sql_type_l == SQL_C_WCHAR ||
-				sql_type_l == SQL_C_BINARY)
-			{
+		TRY_SQL(hStmt, SQL_HANDLE_STMT,
 				last_retcode = SQLColAttribute(hStmt,
 											   col,
-											   SQL_DESC_LENGTH,
+											   SQL_DESC_CONCISE_TYPE,
 											   nullptr,
 											   0,
 											   nullptr,
-											   &data_size);
-				if (last_retcode == SQL_SUCCESS ||
-					last_retcode == SQL_SUCCESS_WITH_INFO)
-				{
-					// data_size *= sql_ctype_size(sql_type_l);
-					data_size *= sql_type_l == SQL_C_WCHAR ? sizeof(wchar_t) : sizeof(char);
-				}
-				else
-				{
-					// error log
-					return false;
-				}
-			}
-			else
-			{
-				data_size = sql_ctype_size(sql_type_ctype(sql_type_l));
-			}
-			bindings_cols.emplace_back();
-			// allocate and bind
-			bindings_cols[col - 1].data = calloc(1, data_size);
-			bindings_cols[col - 1].ind_ptr = (SQLLEN*)calloc(1, sizeof(SQLLEN));
-			bindings_cols[col - 1].type = sql_type_l;
-			bindings_cols[col - 1].size = data_size;
-
-			last_retcode = SQLBindCol(hStmt,
-									  col,
-									  sql_type_l,
-									  bindings_cols[col - 1].data,
-									  data_size,
-									  bindings_cols[col - 1].ind_ptr);
-			if (last_retcode == SQL_SUCCESS ||
-				last_retcode == SQL_SUCCESS_WITH_INFO)
-			{
-				// may be display info if sql success with info
-			}
-			else
-			{
-				// error log
-				return false;
-			}
+											   &sql_type_l),
+				L"Failed to get SQLColAttribute",
+				return false);
+		
+		// if this is string type then obtain it's length info
+		if (sql_type_l == SQL_C_CHAR ||
+			sql_type_l == SQL_C_WCHAR ||
+			sql_type_l == SQL_C_BINARY)
+		{
+			TRY_SQL(hStmt, SQL_HANDLE_STMT,
+					last_retcode = SQLColAttribute(hStmt,
+												   col,
+												   SQL_DESC_LENGTH,
+												   nullptr,
+												   0,
+												   nullptr,
+												   &data_size),
+					L"Failed to get length of string column with SQLColAttribute",
+					return false);
+			data_size *= sql_type_l == SQL_C_WCHAR ? sizeof(wchar_t) : sizeof(char);
 		}
 		else
 		{
-			// error log
-			return false;
+			data_size = sql_ctype_size(sql_type_ctype(sql_type_l));
 		}
+		bindings_cols.emplace_back();
+		// allocate and bind
+		bindings_cols[col - 1].data = calloc(1, data_size);
+		bindings_cols[col - 1].ind_ptr = (SQLLEN*)calloc(1, sizeof(SQLLEN));
+		bindings_cols[col - 1].type = sql_type_l;
+		bindings_cols[col - 1].size = data_size;
+		TRY_SQL(hStmt, SQL_HANDLE_STMT,
+				last_retcode = SQLBindCol(hStmt,
+										  col,
+										  sql_type_l,
+										  bindings_cols[col - 1].data,
+										  data_size,
+										  bindings_cols[col - 1].ind_ptr),
+				L"Failed to accomplish bind via SQLBindCol",
+				return false);
 	}
 	return are_bindings_alloc = true;
 }
@@ -391,6 +380,7 @@ Data_Matrix_t Stmt::get_all_rows()
 		if (last_retcode == SQL_ERROR)
 		{
 			// error log
+			ERR_LOG(L"SQLFetch failed");
 			return data_mx;
 		}
 		else if (last_retcode == SQL_NO_DATA_FOUND)
@@ -446,21 +436,22 @@ bool Odbc::connect()
 {
 	if (connected)
 	{
-		// report already conneted
+	    ERR_LOG(L"Connetion was already set");
 		return false;
 	}
 	
 	if (!connection_string)
 	{
 		// report no connection string
+		ERR_LOG("No connection string provided");
 		return false;
 	}
+	
+	TRY_SQL(hEnv, SQL_HANDLE_ENV,
+			SQLAllocHandle(SQL_HANDLE_DBC, hEnv, &hDbc),
+			L"Failed to alloc SQL_HANDLE_DBC",
+			return false);
 
-	if (SQLAllocHandle(SQL_HANDLE_DBC, hEnv, &hDbc) == SQL_ERROR)
-	{
-		// error log
-		return false;
-	}
 	TRY_SQL(hDbc, SQL_HANDLE_DBC,
 			last_retcode = SQLDriverConnect(hDbc,
 											NULL,
@@ -475,9 +466,10 @@ bool Odbc::connect()
 	connected = true;
 
 	// alloc hStmt
-	last_retcode = SQLAllocHandle(SQL_HANDLE_STMT, hDbc, &hStmt);
-	if (last_retcode == SQL_ERROR)
-		hStmt = NULL;
+	TRY_SQL(hDbc, SQL_HANDLE_DBC,
+			last_retcode = SQLAllocHandle(SQL_HANDLE_STMT, hDbc, &hStmt),
+			L"Failed to allocate SQL_HANDLE_STMT",
+			hStmt = NULL);
 
 	return connected;
 }
@@ -494,17 +486,14 @@ Stmt *Odbc::exec_query(const char *query)
 	if (hStmt)
 	{
 		stmt = new Stmt(hStmt, query);
-		stmt->exec();
-		if (stmt->get_last_retcode() == SQL_SUCCESS ||
-			stmt->get_last_retcode() == SQL_SUCCESS_WITH_INFO)
-		{
-			// handle log if with_info
+		// TRY_SQL(hStmt, SQL_HANDLE_STMT,
+		// 		stmt->exec(),
+		// 		L"Failed to execute statement",
+		// 		return nullptr);
+		if (stmt->exec() != SQL_ERROR)
 			return stmt;
-		}
 		else
-		{
 			return nullptr;
-		}
 	}
 	else
 	{
