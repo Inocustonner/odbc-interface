@@ -1,5 +1,5 @@
 #pragma once
-#include <P7_Trace.h>
+#include <P7/P7_Trace.h>
 // include windows
 #define LOG(format, ...) Odbc_Logger::pTrace->P7_TRACE(Odbc_Logger::hModule, L"[\n" format L"\n]", __VA_ARGS__)
 #define ERR_LOG(format, ...) Odbc_Logger::pTrace->P7_ERROR(Odbc_Logger::hModule, L"[\n" format L"\n]", __VA_ARGS__)
