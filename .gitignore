@@ -1,5 +1,8 @@
 **.txt
+<<<<<<< HEAD
 !**CMakeLists.txt
+=======
+>>>>>>> ee5714341d1fb641c6c76bff3b2fc46075744168
 **.pdb
 obj/
 bin/
