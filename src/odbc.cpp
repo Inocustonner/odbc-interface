@@ -6,24 +6,24 @@
 // #define ERR_LOG(format, ...) Odbc_Logger::pTrace->P7_ERROR(L"[\n" format L"\n]", __VA_ARGS__)
 // #define LOG_LINE(format, ...) LOG(L"\t" format, __VA_ARGS__)
 
-#define TRY_SQL_NATIVE(h, ht, x, comment, after_err_handler) \
+#define TRY_SQL_CLASS(h, ht, x, comment, after_err_handler)	\
 	{ \
 		RETCODE rc = x; \
 		if (rc == SQL_SUCCESS_WITH_INFO) \
 		{ \
-			std_sqltrace_handler(h, ht, x, comment); \
+			std_sqltrace_handler(h, ht, x, comment, &sql_status_code);	\
 		} \
 		if (rc == SQL_ERROR) \
 		{ \
-			std_sqlerr_handler(h, ht, x, comment); \
+			std_sqlerr_handler(h, ht, x, comment, &sql_status_code); \
 			after_err_handler; \
 		} \
 	}
 
-#define TRY_SQL TRY_SQL_NATIVE
+#define TRY_SQL TRY_SQL_CLASS
 static SQLHENV hEnv= NULL;
 
-std::string handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
+std::string handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, SQLINTEGER *status_code = nullptr)
 {
 	if (ret_code == SQL_INVALID_HANDLE)
 	{
@@ -56,6 +56,9 @@ std::string handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
 			// report_err("[ %5.5s ] %s (%d)\n", state_wsz, message_wsz, error_i);
 		}
 	}
+	if (status_code)
+		*status_code = atoi((const char*)state_sz);
+
 	// TODO: replace with more efficient variant
 	if (std::size(diag_rec))
 		diag_rec.pop_back(); // remove last '\n'
@@ -63,7 +66,7 @@ std::string handle_diag_rec(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code)
 }
 
 
-void std_sqltrace_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const wchar_t *line_msg_wstr = nullptr)
+void std_sqltrace_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const wchar_t *line_msg_wstr = nullptr, SQLINTEGER *status_code = nullptr)
 {
 	std::wstring trace_msg;
 	trace_msg.reserve(1000);
@@ -73,7 +76,7 @@ void std_sqltrace_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, c
 		trace_msg += L"\tComment:\n" L"\t\t" + std::wstring(line_msg_wstr) + L'\n';
 	}
 
-	std::string diag_rec_str = handle_diag_rec(hsql, htype, ret_code);
+	std::string diag_rec_str = handle_diag_rec(hsql, htype, ret_code, status_code);
 	if (diag_rec_str.length())
 	{
 		trace_msg += L"\t" L"DiagRec:\n";
@@ -86,7 +89,7 @@ void std_sqltrace_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, c
 }
 
 
-void std_sqlerr_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const wchar_t *line_msg_wstr = nullptr)
+void std_sqlerr_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, const wchar_t *line_msg_wstr = nullptr, SQLINTEGER *status_code = nullptr)
 {
 	std::wstring error_msg;
 	error_msg.reserve(1000);
@@ -96,7 +99,7 @@ void std_sqlerr_handler(SQLHANDLE hsql, SQLSMALLINT htype, RETCODE ret_code, con
 		error_msg += L"\tComment:\n" L"\t\t" + std::wstring(line_msg_wstr) + L'\n';
 	}
 
-	std::string diag_rec_str = handle_diag_rec(hsql, htype, ret_code);
+	std::string diag_rec_str = handle_diag_rec(hsql, htype, ret_code, status_code);
 	if (diag_rec_str.length())
 	{
 		error_msg += L"\t" L"DiagRec:\n";
@@ -288,7 +291,7 @@ bool Stmt::alloc_odbc_data()
 {
 	for (SQLSMALLINT col = 1; col <= cols_cnt; ++col)
 	{
-		SQLSMALLINT sql_type_l;
+		SQLLEN sql_type_l;
 		SQLLEN data_size = 0;
 		TRY_SQL(hStmt, SQL_HANDLE_STMT,
 				last_retcode = SQLColAttribute(hStmt,
@@ -320,18 +323,18 @@ bool Stmt::alloc_odbc_data()
 		}
 		else
 		{
-			data_size = sql_ctype_size(sql_type_ctype(sql_type_l));
+			data_size = sql_ctype_size(sql_type_ctype((SQLSMALLINT)sql_type_l));
 		}
 		bindings_cols.emplace_back();
 		// allocate and bind
 		bindings_cols[col - 1].data = calloc(1, data_size);
 		bindings_cols[col - 1].ind_ptr = (SQLLEN*)calloc(1, sizeof(SQLLEN));
-		bindings_cols[col - 1].type = sql_type_l;
+		bindings_cols[col - 1].type = (SQLSMALLINT)sql_type_l;
 		bindings_cols[col - 1].size = data_size;
 		TRY_SQL(hStmt, SQL_HANDLE_STMT,
 				last_retcode = SQLBindCol(hStmt,
 										  col,
-										  sql_type_l,
+										  (SQLSMALLINT)sql_type_l,
 										  bindings_cols[col - 1].data,
 										  data_size,
 										  bindings_cols[col - 1].ind_ptr),
@@ -408,9 +411,14 @@ Data_Matrix_t Stmt::get_all_rows()
 }
 
 
-RETCODE Stmt::get_last_retcode()
+RETCODE Stmt::get_last_retcode() const noexcept
 {
 	return last_retcode;
+}
+
+SQLINTEGER Stmt::get_status_code() const noexcept
+{
+	return sql_status_code;
 }
 
 /* ------------------------------------------------- */
@@ -427,6 +435,11 @@ void Odbc::set_connection_string(const char *connection_string)
 
 Odbc::~Odbc()
 {
+	if (stmt)
+	{
+		delete stmt;
+		stmt = nullptr;
+	}
 	if (hStmt) SQLFreeHandle(SQL_HANDLE_STMT, hStmt);
 	if (hDbc) SQLFreeHandle(SQL_HANDLE_DBC, hDbc);
 }
@@ -490,14 +503,30 @@ Stmt *Odbc::exec_query(const char *query)
 		// 		stmt->exec(),
 		// 		L"Failed to execute statement",
 		// 		return nullptr);
-		if (stmt->exec() != SQL_ERROR)
+		last_retcode = stmt->exec();
+		sql_status_code = stmt->get_status_code();
+		
+		if (last_retcode != SQL_ERROR)
 			return stmt;
 		else
-			return nullptr;
+		{
+			return nullptr;	
+		}
 	}
 	else
 	{
 		// if still is not allocated allocate
 		return nullptr;			// temporary solution
 	}
+}
+
+
+RETCODE Odbc::get_last_retcode() const noexcept
+{
+	return last_retcode;
+}
+
+SQLINTEGER Odbc::get_status_code() const noexcept
+{
+	return sql_status_code;
 }
